@@ -91,7 +91,7 @@ export default function Home() {
       setNoticeDate(data.notice_date || '');
       setItems((data.items || []).map((it, i) => ({
         id: i,
-        manufacturer: it.manufacturer || data.supplier || '',
+        manufacturer: data.supplier || '',
         product_name: it.product_name || '',
         spec: it.spec || '',
         status: it.status || '미정',

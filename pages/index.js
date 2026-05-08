@@ -3,10 +3,6 @@ import Head from 'next/head';
 
 let XLSX = null;
 
-// ★ 모듈 레벨 변수 - 절대 stale 안됨
-let _items = [];
-let _supplier = '';
-
 const STATUS_LIST = [
   '판매중','품절','입고예정','일부규격품절',
   '생산&공급중단','미정','입고완료','정산','신규금지','기타정책'
@@ -14,25 +10,42 @@ const STATUS_LIST = [
 
 const COL = { manufacturer:0, product:1, spec:2, status:3, date:4, note:5 };
 
-function normalize(str) {
+function drugIdentity(str) {
   return (str || '').toLowerCase()
-    .replace(/\(.*?\)/g, '')
-    .replace(/\d+(\.\d+)?(mg|ml|g|mcg|iu)/gi, '')
-    .replace(/\d+/g, '')
-    .replace(/[^\w가-힣]/g, '')
+    .replace(/[()（）\[\]]/g, '')
+    .replace(/\s+/g, '')
+    .replace(/\d+(t|c|관|포|병|앰플|바이알|b|a)(?![a-z가-힣])/gi, '')
+    .replace(/ptp/gi, '')
+    .replace(/alu-?alu/gi, '')
     .trim();
 }
 
-function similarity(a, b) {
-  const na = normalize(a), nb = normalize(b);
-  if (!na || !nb) return 0;
-  if (na === nb) return 1;
-  if (na.includes(nb) || nb.includes(na)) return 0.9;
+function matchScore(a, b) {
+  const da = drugIdentity(a), db = drugIdentity(b);
+  if (!da || !db) return 0;
+  if (da === db) return 1;
+  if (da.includes(db) || db.includes(da)) return 0.9;
   let m = 0;
-  for (let i = 0; i < Math.min(na.length, nb.length); i++) {
-    if (na[i] === nb[i]) m++;
-  }
-  return m / Math.max(na.length, nb.length);
+  const len = Math.min(da.length, db.length);
+  for (let i = 0; i < len; i++) if (da[i] === db[i]) m++;
+  return m / Math.max(da.length, db.length);
+}
+
+// ★ DOM에서 테이블 데이터 읽기
+function readFromDOM() {
+  const tableRows = document.querySelectorAll('table tbody tr');
+  return Array.from(tableRows).map(tr => {
+    const inputs = tr.querySelectorAll('input');
+    const select = tr.querySelector('select');
+    return {
+      manufacturer: inputs[0]?.value || '',
+      product_name: inputs[1]?.value || '',
+      spec:         inputs[2]?.value || '',
+      status:       select?.value || '',
+      date:         inputs[3]?.value || '',
+      note:         inputs[4]?.value || '',
+    };
+  }).filter(it => it.product_name.trim());
 }
 
 export default function Home() {
@@ -48,32 +61,9 @@ export default function Home() {
   const [noticeDate, setNoticeDate] = useState('');
   const [items, setItems] = useState([]);
   const [error, setError] = useState('');
+  const [saved, setSaved] = useState(false);
 
   useEffect(() => { import('xlsx').then(mod => { XLSX = mod; }); }, []);
-
-  // ★ 상태 + 모듈변수 동시 업데이트
-  function setItemsFull(newItems) {
-    _items = newItems;
-    setItems(newItems);
-  }
-  function setSupplierFull(val) {
-    _supplier = val;
-    setSupplier(val);
-  }
-
-  function updateItem(id, field, value) {
-    const next = _items.map(it => it.id === id ? { ...it, [field]: value } : it);
-    setItemsFull(next);
-  }
-  function addRow() {
-    setItemsFull([..._items, {
-      id: Date.now(), manufacturer: _supplier,
-      product_name: '', spec: '', status: '미정', date: '', note: ''
-    }]);
-  }
-  function deleteRow(id) {
-    setItemsFull(_items.filter(it => it.id !== id));
-  }
 
   function handleImg(file) {
     if (!file) return;
@@ -97,9 +87,9 @@ export default function Home() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
-      setSupplierFull(data.supplier || '');
+      setSupplier(data.supplier || '');
       setNoticeDate(data.notice_date || '');
-      setItemsFull((data.items || []).map((it, i) => ({
+      setItems((data.items || []).map((it, i) => ({
         id: i,
         manufacturer: it.manufacturer || data.supplier || '',
         product_name: it.product_name || '',
@@ -108,30 +98,69 @@ export default function Home() {
         date: it.exact_date || '',
         note: [it.vague_date, it.note].filter(Boolean).join(' / '),
       })));
+      setSaved(false);
       setStep(2);
     } catch (e) { setError(e.message); }
     finally { setLoading(false); }
   }
 
+  function addRow() {
+    setItems(prev => [...prev, {
+      id: Date.now(), manufacturer: supplier,
+      product_name: '', spec: '', status: '미정', date: '', note: ''
+    }]);
+  }
+  function deleteRow(id) {
+    setItems(prev => prev.filter(it => it.id !== id));
+  }
+
+  // ★ 저장: 추출 데이터만 별도 Excel로 다운로드 (확인용)
+  function saveExtracted() {
+    if (!XLSX) return;
+    const currentItems = readFromDOM();
+    if (currentItems.length === 0) { alert('데이터가 없어요.'); return; }
+
+    const supplierVal = document.getElementById('inp-supplier')?.value || '';
+    const dateVal = document.getElementById('inp-date')?.value || '';
+
+    const headers = ['제약사', '제품명', '규격', '상태', '입고/품절 날짜', '비고'];
+    const data = [
+      [`공급사: ${supplierVal}`, `날짜: ${dateVal}`, '', '', '', `총 ${currentItems.length}건`],
+      [],
+      headers,
+      ...currentItems.map(it => [
+        it.manufacturer, it.product_name, it.spec, it.status, it.date, it.note
+      ])
+    ];
+
+    const ws = XLSX.utils.aoa_to_sheet(data);
+
+    // 날짜 컬럼 문자열 강제
+    data.forEach((row, ri) => {
+      if (ri < 3) return;
+      const val = row[4];
+      if (val) {
+        const addr = XLSX.utils.encode_cell({ r: ri, c: 4 });
+        ws[addr] = { v: String(val), t: 's' };
+      }
+    });
+
+    // 컬럼 너비
+    ws['!cols'] = [
+      { wch: 14 }, { wch: 28 }, { wch: 18 }, { wch: 14 }, { wch: 14 }, { wch: 30 }
+    ];
+
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, '추출데이터');
+    XLSX.writeFile(wb, `추출_${supplierVal}_${dateVal}.xlsx`);
+    setSaved(true);
+  }
+
+  // ★ 기존 Excel에 반영
   function handleExcel(file) {
     if (!file || !XLSX) return;
-
-    // ★ 모듈 레벨 변수에서 읽기 - 절대 stale 없음
-    // ★ 화면의 input 값을 직접 읽음 - 수정 내용 100% 반영
-    const tableRows = document.querySelectorAll('table tbody tr');
-    const currentItems = Array.from(tableRows).map(tr => {
-      const inputs = tr.querySelectorAll('input');
-      const select = tr.querySelector('select');
-      return {
-        manufacturer: inputs[0]?.value || '',
-        product_name: inputs[1]?.value || '',
-        spec:         inputs[2]?.value || '',
-        status:       select?.value || '',
-        date:         inputs[3]?.value || '',
-        note:         inputs[4]?.value || '',
-      };
-    }).filter(it => it.product_name.trim());
-    console.log('적용할 데이터:', currentItems.map(i => i.product_name));
+    const currentItems = readFromDOM();
+    if (currentItems.length === 0) { alert('적용할 데이터가 없어요.'); return; }
 
     const reader = new FileReader();
     reader.onload = e => {
@@ -140,12 +169,11 @@ export default function Home() {
       const ws = wb.Sheets[wsName];
       const allRows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '', raw: true });
 
-      // ★ 빈 행 제거 (phantom rows 방지)
+      // 빈 행 제거
       const lastDataIdx = allRows.reduce((last, row, i) =>
         row.some(c => c !== '' && c !== null && c !== undefined) ? i : last, 0);
       const rows = allRows.slice(0, lastDataIdx + 1);
 
-      // 헤더 행 찾기
       const headerIdx = rows.findIndex(r =>
         Array.isArray(r) && r.some(c => String(c).trim() === '제품명')
       );
@@ -153,27 +181,24 @@ export default function Home() {
 
       const dataRows = rows.slice(headerIdx + 1);
       let updateCount = 0, addCount = 0;
+      const log = [];
 
       currentItems.forEach(item => {
-        if (!item.product_name.trim()) return;
-
         let bestIdx = -1, bestScore = 0;
         dataRows.forEach((r, idx) => {
-          const score = similarity(String(r[COL.product] || ''), item.product_name);
+          const score = matchScore(String(r[COL.product] || ''), item.product_name);
           if (score > bestScore) { bestScore = score; bestIdx = idx; }
         });
 
-        if (bestScore >= 0.75 && bestIdx >= 0) {
-          // ★ 기존 행 업데이트 (수정된 값 적용)
+        if (bestScore >= 0.85 && bestIdx >= 0) {
           const ri = headerIdx + 1 + bestIdx;
-          rows[ri][COL.manufacturer] = item.manufacturer;
-          rows[ri][COL.spec]         = item.spec;
-          rows[ri][COL.status]       = item.status;
-          rows[ri][COL.date]         = item.date;
-          rows[ri][COL.note]         = item.note;
+          const oldName = String(rows[ri][COL.product] || '');
+          rows[ri][COL.status] = item.status;
+          if (item.date) rows[ri][COL.date] = item.date;
+          if (item.note) rows[ri][COL.note] = item.note;
+          log.push(`✏️ "${oldName}" ← 상태:${item.status} (유사도:${(bestScore*100).toFixed(0)}%)`);
           updateCount++;
         } else {
-          // ★ 신규 행 추가
           const newRow = new Array(8).fill('');
           newRow[COL.manufacturer] = item.manufacturer;
           newRow[COL.product]      = item.product_name;
@@ -182,14 +207,12 @@ export default function Home() {
           newRow[COL.date]         = item.date;
           newRow[COL.note]         = item.note;
           rows.push(newRow);
+          log.push(`➕ "${item.product_name}" 신규추가`);
           addCount++;
         }
       });
 
-      // ★ 새 시트 생성
       const newWs = XLSX.utils.aoa_to_sheet(rows);
-
-      // ★ 날짜 컬럼 전체 문자열 강제
       rows.forEach((row, ri) => {
         const val = row[COL.date];
         if (val !== '' && val !== null && val !== undefined) {
@@ -202,7 +225,9 @@ export default function Home() {
       const d = new Date();
       const ds = `${d.getFullYear()}${String(d.getMonth()+1).padStart(2,'0')}${String(d.getDate()).padStart(2,'0')}`;
       XLSX.writeFile(wb, `히스토바이오_제품_유통_현황_${ds}.xlsx`);
-      alert(`✅ 완료!\n업데이트: ${updateCount}건 / 신규추가: ${addCount}건`);
+
+      console.log(log.join('\n'));
+      alert(`✅ 완료!\n업데이트: ${updateCount}건 / 신규추가: ${addCount}건\n\n${log.join('\n')}`);
     };
     reader.readAsArrayBuffer(file);
   }
@@ -216,11 +241,13 @@ export default function Home() {
     btnBlue:  { background:'#3B82F6', color:'#fff', border:'none', borderRadius:8, padding:'10px 20px', fontSize:14, fontWeight:600, cursor:'pointer' },
     btnGray:  { background:'#fff', color:'#333', border:'1px solid #ddd', borderRadius:8, padding:'10px 16px', fontSize:14, cursor:'pointer' },
     btnGreen: { background:'#22c55e', color:'#fff', border:'none', borderRadius:8, padding:'11px 28px', fontSize:15, fontWeight:700, cursor:'pointer' },
+    btnOrange:{ background:'#f59e0b', color:'#fff', border:'none', borderRadius:8, padding:'10px 20px', fontSize:14, fontWeight:600, cursor:'pointer' },
     inp:      { border:'1px solid #e5e7eb', borderRadius:6, padding:'5px 7px', fontSize:13, width:'100%', background:'#fff', color:'#111', boxSizing:'border-box' },
     sel:      { border:'1px solid #e5e7eb', borderRadius:6, padding:'5px 4px', fontSize:12, background:'#fff', color:'#111', width:'100%' },
     th:       { padding:'8px 6px', fontSize:12, fontWeight:600, background:'#f8f9fa', color:'#555', textAlign:'left', whiteSpace:'nowrap', borderBottom:'2px solid #e5e7eb' },
     td:       { padding:'4px', verticalAlign:'middle', borderBottom:'1px solid #f3f3f3' },
     err:      { background:'#FCEBEB', color:'#A32D2D', borderRadius:8, padding:'10px 14px', fontSize:13, marginTop:10 },
+    info:     { background:'#EAF3DE', color:'#3B6D11', borderRadius:8, padding:'8px 14px', fontSize:13, marginTop:8 },
   };
 
   return (
@@ -229,14 +256,15 @@ export default function Home() {
       <div style={s.wrap}>
         <div style={s.card}>
           <h1 style={{ fontSize:20, fontWeight:700, margin:'0 0 4px' }}>📦 재고 이슈 알리미</h1>
-          <p style={{ fontSize:13, color:'#888', margin:'0 0 16px' }}>이미지 분석 → 수기 수정 → Excel 자동 업데이트</p>
+          <p style={{ fontSize:13, color:'#888', margin:'0 0 16px' }}>이미지 분석 → 수기 수정 → 저장 확인 → Excel 반영</p>
 
           <div style={s.steps}>
-            {['① 이미지 분석','② 내용 확인·수정','③ Excel 다운로드'].map((label,i) => (
+            {['① 이미지 분석','② 내용 확인·수정','③ Excel 반영'].map((label,i) => (
               <div key={i} style={s.dot(step===i+1, step>i+1)}>{label}</div>
             ))}
           </div>
 
+          {/* ── STEP 1 ── */}
           {step === 1 && (
             <>
               {!imgPreview ? (
@@ -271,22 +299,22 @@ export default function Home() {
             </>
           )}
 
+          {/* ── STEP 2 ── */}
           {step === 2 && (
             <>
               <div style={{ display:'flex', gap:10, marginBottom:14, flexWrap:'wrap', alignItems:'flex-end' }}>
                 <div style={{ flex:1, minWidth:150 }}>
                   <div style={{ fontSize:12, color:'#888', marginBottom:3 }}>공급사</div>
-                  <input style={s.inp} value={supplier}
-                    onChange={e => setSupplierFull(e.target.value)} />
+                  <input id="inp-supplier" style={s.inp} defaultValue={supplier} />
                 </div>
                 <div style={{ flex:1, minWidth:130 }}>
                   <div style={{ fontSize:12, color:'#888', marginBottom:3 }}>안내 날짜</div>
-                  <input style={s.inp} value={noticeDate}
-                    onChange={e => setNoticeDate(e.target.value)} />
+                  <input id="inp-date" style={s.inp} defaultValue={noticeDate} />
                 </div>
                 <div style={{ fontSize:13, color:'#888', paddingBottom:6 }}>총 {items.length}건</div>
               </div>
 
+              {/* 테이블 */}
               <div style={{ overflowX:'auto', marginBottom:10 }}>
                 <table style={{ width:'100%', borderCollapse:'collapse', minWidth:820 }}>
                   <thead>
@@ -299,31 +327,25 @@ export default function Home() {
                   <tbody>
                     {items.map(item => (
                       <tr key={item.id}>
-                        <td style={{ ...s.td, width:80 }}>
-                          <input style={s.inp} value={item.manufacturer}
-                            onChange={e => updateItem(item.id,'manufacturer',e.target.value)} />
-                        </td>
-                        <td style={{ ...s.td, width:165 }}>
-                          <input style={{ ...s.inp, fontWeight:500 }} value={item.product_name}
-                            onChange={e => updateItem(item.id,'product_name',e.target.value)} />
-                        </td>
                         <td style={{ ...s.td, width:90 }}>
-                          <input style={s.inp} value={item.spec}
-                            onChange={e => updateItem(item.id,'spec',e.target.value)} />
+                          <input style={s.inp} defaultValue={item.manufacturer} />
+                        </td>
+                        <td style={{ ...s.td, width:175 }}>
+                          <input style={{ ...s.inp, fontWeight:500 }} defaultValue={item.product_name} />
+                        </td>
+                        <td style={{ ...s.td, width:100 }}>
+                          <input style={s.inp} defaultValue={item.spec} />
                         </td>
                         <td style={{ ...s.td, width:118 }}>
-                          <select style={s.sel} value={item.status}
-                            onChange={e => updateItem(item.id,'status',e.target.value)}>
+                          <select style={s.sel} defaultValue={item.status}>
                             {STATUS_LIST.map(st => <option key={st} value={st}>{st}</option>)}
                           </select>
                         </td>
-                        <td style={{ ...s.td, width:80 }}>
-                          <input style={s.inp} value={item.date} placeholder="5월 6일"
-                            onChange={e => updateItem(item.id,'date',e.target.value)} />
+                        <td style={{ ...s.td, width:85 }}>
+                          <input style={s.inp} defaultValue={item.date} placeholder="5월 6일" />
                         </td>
                         <td style={s.td}>
-                          <input style={s.inp} value={item.note}
-                            onChange={e => updateItem(item.id,'note',e.target.value)} />
+                          <input style={s.inp} defaultValue={item.note} />
                         </td>
                         <td style={{ ...s.td, width:26, textAlign:'center' }}>
                           <button onClick={() => deleteRow(item.id)}
@@ -337,16 +359,26 @@ export default function Home() {
                 </table>
               </div>
 
-              <div style={{ display:'flex', gap:8, alignItems:'center', flexWrap:'wrap' }}>
+              {/* 버튼 영역 */}
+              <div style={{ display:'flex', gap:8, alignItems:'center', flexWrap:'wrap', marginTop:8 }}>
                 <button style={{ ...s.btnGray, fontSize:13 }} onClick={addRow}>+ 행 추가</button>
+                <button style={s.btnOrange} onClick={saveExtracted}>
+                  💾 저장 (확인용 다운로드)
+                </button>
                 <div style={{ flex:1 }} />
-                <button style={s.btnGray} onClick={() => setStep(1)}>↩ 다시 분석</button>
+                <button style={s.btnGray} onClick={() => { setStep(1); setSaved(false); }}>↩ 다시 분석</button>
                 <button style={s.btnGreen} onClick={() => xlsRef.current?.click()}>
-                  완료 → Excel 업로드 ⬆
+                  📊 기존 Excel에 반영
                 </button>
                 <input type="file" ref={xlsRef} accept=".xlsx,.xls" style={{ display:'none' }}
                   onChange={e => { if (e.target.files[0]) handleExcel(e.target.files[0]); }} />
               </div>
+
+              {saved && (
+                <div style={s.info}>
+                  ✅ 저장 완료! 다운로드한 파일에서 데이터를 확인한 후, "기존 Excel에 반영" 버튼으로 병합하세요.
+                </div>
+              )}
             </>
           )}
         </div>

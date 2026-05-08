@@ -127,4 +127,152 @@ export default function Home() {
       const ws = wb.Sheets[wsName];
       const allRows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '', raw: true });
 
-      // ★ 빈 행 제거 (phantom rows
+      // ★ 빈 행 제거 (phantom rows 방지)
+      const lastDataIdx = allRows.reduce((last, row, i) =>
+        row.some(c => c !== '' && c !== null && c !== undefined) ? i : last, 0);
+      const rows = allRows.slice(0, lastDataIdx + 1);
+
+      // 헤더 행 찾기
+      const headerIdx = rows.findIndex(r =>
+        Array.isArray(r) && r.some(c => String(c).trim() === '제품명')
+      );
+      if (headerIdx < 0) { alert('제품명 헤더를 찾을 수 없어요.'); return; }
+
+      const dataRows = rows.slice(headerIdx + 1);
+      let updateCount = 0, addCount = 0;
+
+      currentItems.forEach(item => {
+        if (!item.product_name.trim()) return;
+
+        let bestIdx = -1, bestScore = 0;
+        dataRows.forEach((r, idx) => {
+          const score = similarity(String(r[COL.product] || ''), item.product_name);
+          if (score > bestScore) { bestScore = score; bestIdx = idx; }
+        });
+
+        if (bestScore >= 0.75 && bestIdx >= 0) {
+          // ★ 기존 행 업데이트 (수정된 값 적용)
+          const ri = headerIdx + 1 + bestIdx;
+          rows[ri][COL.manufacturer] = item.manufacturer;
+          rows[ri][COL.spec]         = item.spec;
+          rows[ri][COL.status]       = item.status;
+          rows[ri][COL.date]         = item.date;
+          rows[ri][COL.note]         = item.note;
+          updateCount++;
+        } else {
+          // ★ 신규 행 추가
+          const newRow = new Array(8).fill('');
+          newRow[COL.manufacturer] = item.manufacturer;
+          newRow[COL.product]      = item.product_name;
+          newRow[COL.spec]         = item.spec;
+          newRow[COL.status]       = item.status;
+          newRow[COL.date]         = item.date;
+          newRow[COL.note]         = item.note;
+          rows.push(newRow);
+          addCount++;
+        }
+      });
+
+      // ★ 새 시트 생성
+      const newWs = XLSX.utils.aoa_to_sheet(rows);
+
+      // ★ 날짜 컬럼 전체 문자열 강제
+      rows.forEach((row, ri) => {
+        const val = row[COL.date];
+        if (val !== '' && val !== null && val !== undefined) {
+          const addr = XLSX.utils.encode_cell({ r: ri, c: COL.date });
+          newWs[addr] = { v: String(val), t: 's' };
+        }
+      });
+
+      wb.Sheets[wsName] = newWs;
+      const d = new Date();
+      const ds = `${d.getFullYear()}${String(d.getMonth()+1).padStart(2,'0')}${String(d.getDate()).padStart(2,'0')}`;
+      XLSX.writeFile(wb, `히스토바이오_제품_유통_현황_${ds}.xlsx`);
+      alert(`✅ 완료!\n업데이트: ${updateCount}건 / 신규추가: ${addCount}건`);
+    };
+    reader.readAsArrayBuffer(file);
+  }
+
+  const s = {
+    wrap:     { minHeight:'100vh', background:'#f5f5f5', display:'flex', justifyContent:'center', padding:'24px 16px' },
+    card:     { background:'#fff', borderRadius:16, padding:'24px 20px', width:'100%', maxWidth:980, height:'fit-content', boxShadow:'0 2px 16px rgba(0,0,0,.08)' },
+    steps:    { display:'flex', gap:6, marginBottom:20 },
+    dot:      (a,d) => ({ flex:1, padding:'7px 0', textAlign:'center', fontSize:13, fontWeight:500, borderRadius:8, background: d?'#EAF3DE':a?'#E6F1FB':'#f5f5f5', color: d?'#3B6D11':a?'#185FA5':'#999', border: d?'1px solid #3B6D11':a?'1px solid #185FA5':'1px solid #eee' }),
+    drop:     { border:'2px dashed #ccc', borderRadius:12, padding:'32px 20px', textAlign:'center', cursor:'pointer', background:'#fafafa' },
+    btnBlue:  { background:'#3B82F6', color:'#fff', border:'none', borderRadius:8, padding:'10px 20px', fontSize:14, fontWeight:600, cursor:'pointer' },
+    btnGray:  { background:'#fff', color:'#333', border:'1px solid #ddd', borderRadius:8, padding:'10px 16px', fontSize:14, cursor:'pointer' },
+    btnGreen: { background:'#22c55e', color:'#fff', border:'none', borderRadius:8, padding:'11px 28px', fontSize:15, fontWeight:700, cursor:'pointer' },
+    inp:      { border:'1px solid #e5e7eb', borderRadius:6, padding:'5px 7px', fontSize:13, width:'100%', background:'#fff', color:'#111', boxSizing:'border-box' },
+    sel:      { border:'1px solid #e5e7eb', borderRadius:6, padding:'5px 4px', fontSize:12, background:'#fff', color:'#111', width:'100%' },
+    th:       { padding:'8px 6px', fontSize:12, fontWeight:600, background:'#f8f9fa', color:'#555', textAlign:'left', whiteSpace:'nowrap', borderBottom:'2px solid #e5e7eb' },
+    td:       { padding:'4px', verticalAlign:'middle', borderBottom:'1px solid #f3f3f3' },
+    err:      { background:'#FCEBEB', color:'#A32D2D', borderRadius:8, padding:'10px 14px', fontSize:13, marginTop:10 },
+  };
+
+  return (
+    <>
+      <Head><title>재고 이슈 알리미</title></Head>
+      <div style={s.wrap}>
+        <div style={s.card}>
+          <h1 style={{ fontSize:20, fontWeight:700, margin:'0 0 4px' }}>📦 재고 이슈 알리미</h1>
+          <p style={{ fontSize:13, color:'#888', margin:'0 0 16px' }}>이미지 분석 → 수기 수정 → Excel 자동 업데이트</p>
+
+          <div style={s.steps}>
+            {['① 이미지 분석','② 내용 확인·수정','③ Excel 다운로드'].map((label,i) => (
+              <div key={i} style={s.dot(step===i+1, step>i+1)}>{label}</div>
+            ))}
+          </div>
+
+          {step === 1 && (
+            <>
+              {!imgPreview ? (
+                <div style={s.drop}
+                  onClick={() => imgRef.current?.click()}
+                  onDragOver={e => e.preventDefault()}
+                  onDrop={e => { e.preventDefault(); handleImg(e.dataTransfer.files[0]); }}>
+                  <div style={{ fontSize:40 }}>📸</div>
+                  <p style={{ fontSize:15, margin:'8px 0 4px' }}><strong>공급사 안내 이미지 업로드</strong></p>
+                  <p style={{ fontSize:13, color:'#999', margin:0 }}>카톡 캡처, 공문 사진 등</p>
+                  <input type="file" ref={imgRef} accept="image/*" style={{ display:'none' }}
+                    onChange={e => handleImg(e.target.files[0])} />
+                </div>
+              ) : (
+                <div style={{ textAlign:'center', marginBottom:12 }}>
+                  <img src={imgPreview} alt="미리보기"
+                    style={{ maxWidth:'100%', maxHeight:220, borderRadius:8, border:'1px solid #eee' }} />
+                </div>
+              )}
+              {error && <div style={s.err}>❌ {error}</div>}
+              <div style={{ display:'flex', gap:8, marginTop:10 }}>
+                <button style={{ ...s.btnBlue, flex:1 }} onClick={analyze} disabled={!imgBase64||loading}>
+                  {loading ? '⏳ AI 분석 중...' : '✨ AI 분석 시작'}
+                </button>
+                {imgPreview && (
+                  <button style={s.btnGray}
+                    onClick={() => { setImgPreview(null); setImgBase64(''); setError(''); }}>
+                    ↩ 다시
+                  </button>
+                )}
+              </div>
+            </>
+          )}
+
+          {step === 2 && (
+            <>
+              <div style={{ display:'flex', gap:10, marginBottom:14, flexWrap:'wrap', alignItems:'flex-end' }}>
+                <div style={{ flex:1, minWidth:150 }}>
+                  <div style={{ fontSize:12, color:'#888', marginBottom:3 }}>공급사</div>
+                  <input style={s.inp} value={supplier}
+                    onChange={e => setSupplierFull(e.target.value)} />
+                </div>
+                <div style={{ flex:1, minWidth:130 }}>
+                  <div style={{ fontSize:12, color:'#888', marginBottom:3 }}>안내 날짜</div>
+                  <input style={s.inp} value={noticeDate}
+                    onChange={e => setNoticeDate(e.target.value)} />
+                </div>
+                <div style={{ fontSize:13, color:'#888', paddingBottom:6 }}>총 {items.length}건</div>
+              </div>
+
+              <div style={{ overflowX:'auto', marginBottom:10 }}>
+                <table style={{ width:'100%', borderCollap

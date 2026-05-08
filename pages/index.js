@@ -275,4 +275,69 @@ export default function Home() {
               </div>
 
               <div style={{ overflowX:'auto', marginBottom:10 }}>
-                <table style={{ width:'100%', borderCollap
+                <table style={{ width:'100%', borderCollapse:'collapse', minWidth:820 }}>
+                  <thead>
+                    <tr>
+                      {['제약사','제품명','규격','상태','날짜','비고',''].map((h,i) => (
+                        <th key={i} style={s.th}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {items.map(item => (
+                      <tr key={item.id}>
+                        <td style={{ ...s.td, width:80 }}>
+                          <input style={s.inp} value={item.manufacturer}
+                            onChange={e => updateItem(item.id,'manufacturer',e.target.value)} />
+                        </td>
+                        <td style={{ ...s.td, width:165 }}>
+                          <input style={{ ...s.inp, fontWeight:500 }} value={item.product_name}
+                            onChange={e => updateItem(item.id,'product_name',e.target.value)} />
+                        </td>
+                        <td style={{ ...s.td, width:90 }}>
+                          <input style={s.inp} value={item.spec}
+                            onChange={e => updateItem(item.id,'spec',e.target.value)} />
+                        </td>
+                        <td style={{ ...s.td, width:118 }}>
+                          <select style={s.sel} value={item.status}
+                            onChange={e => updateItem(item.id,'status',e.target.value)}>
+                            {STATUS_LIST.map(st => <option key={st} value={st}>{st}</option>)}
+                          </select>
+                        </td>
+                        <td style={{ ...s.td, width:80 }}>
+                          <input style={s.inp} value={item.date} placeholder="5월 6일"
+                            onChange={e => updateItem(item.id,'date',e.target.value)} />
+                        </td>
+                        <td style={s.td}>
+                          <input style={s.inp} value={item.note}
+                            onChange={e => updateItem(item.id,'note',e.target.value)} />
+                        </td>
+                        <td style={{ ...s.td, width:26, textAlign:'center' }}>
+                          <button onClick={() => deleteRow(item.id)}
+                            style={{ background:'none', border:'none', color:'#bbb', cursor:'pointer', fontSize:16 }}>
+                            ✕
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              <div style={{ display:'flex', gap:8, alignItems:'center', flexWrap:'wrap' }}>
+                <button style={{ ...s.btnGray, fontSize:13 }} onClick={addRow}>+ 행 추가</button>
+                <div style={{ flex:1 }} />
+                <button style={s.btnGray} onClick={() => setStep(1)}>↩ 다시 분석</button>
+                <button style={s.btnGreen} onClick={() => xlsRef.current?.click()}>
+                  완료 → Excel 업로드 ⬆
+                </button>
+                <input type="file" ref={xlsRef} accept=".xlsx,.xls" style={{ display:'none' }}
+                  onChange={e => { if (e.target.files[0]) handleExcel(e.target.files[0]); }} />
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+    </>
+  );
+}

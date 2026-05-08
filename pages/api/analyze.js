@@ -58,8 +58,11 @@ export default async function handler(req, res) {
     const data = await response.json();
     if (!response.ok) throw new Error(data.error?.message || 'API 오류');
 
-    const raw = data.content?.find((c) => c.type === 'text')?.text || '';
-    const parsed = JSON.parse(raw.replace(/```json|```/g, '').trim());
+   const raw = data.content?.find((c) => c.type === 'text')?.text || '';
+    const cleaned = raw.replace(/```json|```/g, '').trim();
+    const jsonMatch = cleaned.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) throw new Error('JSON 추출 실패');
+    const parsed = JSON.parse(jsonMatch[0]);
     res.status(200).json(parsed);
   } catch (err) {
     res.status(500).json({ error: err.message });

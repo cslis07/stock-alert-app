@@ -1,51 +1,32 @@
 import { useState, useRef } from 'react';
 import Head from 'next/head';
 
-const STATUS_CONFIG = {
-  품절:     { color: '#A32D2D', bg: '#FCEBEB', icon: '🚫' },
-  생산중단: { color: '#A32D2D', bg: '#FCEBEB', icon: '⛔' },
-  장기품절: { color: '#854F0B', bg: '#FAEEDA', icon: '⚠️' },
-  미정:     { color: '#5F5E5A', bg: '#F1EFE8', icon: '❓' },
-  입고예정: { color: '#185FA5', bg: '#E6F1FB', icon: '📦' },
-  기타:     { color: '#5F5E5A', bg: '#F1EFE8', icon: '📌' },
+const STATUS_LIST = [
+  '판매중','품절','입고예정','일부규격품절',
+  '생산&공급중단','미정','입고완료','정산','신규금지','기타정책'
+];
+
+const STATUS_COLOR = {
+  '판매중':     { bg: '#EAF3DE', color: '#3B6D11' },
+  '품절':       { bg: '#FCEBEB', color: '#A32D2D' },
+  '입고예정':   { bg: '#E6F1FB', color: '#185FA5' },
+  '일부규격품절':{ bg: '#FAEEDA', color: '#854F0B' },
+  '생산&공급중단':{ bg: '#FCEBEB', color: '#A32D2D' },
+  '미정':       { bg: '#F1EFE8', color: '#5F5E5A' },
+  '입고완료':   { bg: '#EAF3DE', color: '#3B6D11' },
+  '정산':       { bg: '#F1EFE8', color: '#5F5E5A' },
+  '신규금지':   { bg: '#FAEEDA', color: '#854F0B' },
+  '기타정책':   { bg: '#F1EFE8', color: '#5F5E5A' },
 };
 
-function generateNotice(data) {
-  const { items = [], supplier, notice_date } = data;
-  const date = notice_date || new Date().toLocaleDateString('ko-KR');
-  const lines = [`📢 재고 안내${supplier ? ` (${supplier})` : ''} — ${date}\n`];
-
-  const groups = {};
-  items.forEach((it) => {
-    if (!groups[it.status]) groups[it.status] = [];
-    groups[it.status].push(it);
-  });
-
-  Object.entries(groups).forEach(([status, list]) => {
-    const cfg = STATUS_CONFIG[status] || STATUS_CONFIG['기타'];
-    lines.push(`${cfg.icon} [${status}]`);
-    list.forEach((it) => {
-      let line = `• ${it.product_name}`;
-      if (it.code) line += ` (${it.code})`;
-      if (it.expected_date) line += ` → 입고 예정: ${it.expected_date}`;
-      if (it.note) line += `\n  ${it.note}`;
-      lines.push(line);
-    });
-    lines.push('');
-  });
-
-  lines.push('불편을 드려 죄송합니다.\n문의사항은 채널로 남겨주세요.');
-  return lines.join('\n');
-}
-
 export default function Home() {
-  const [preview, setPreview] = useState(null);
-  const [base64, setBase64] = useState('');
+  const [preview, setPreview]   = useState(null);
+  const [base64, setBase64]     = useState('');
   const [mimeType, setMimeType] = useState('image/jpeg');
-  const [loading, setLoading] = useState(false);
-  const [result, setResult] = useState(null);
-  const [error, setError] = useState('');
-  const [copied, setCopied] = useState(false);
+  const [loading, setLoading]   = useState(false);
+  const [result, setResult]     = useState(null);
+  const [error, setError]       = useState('');
+  const [copied, setCopied]     = useState(false);
   const fileRef = useRef();
 
   function handleFile(file) {
@@ -55,17 +36,14 @@ export default function Home() {
     reader.onload = (e) => {
       setPreview(e.target.result);
       setBase64(e.target.result.split(',')[1]);
-      setResult(null);
-      setError('');
+      setResult(null); setError('');
     };
     reader.readAsDataURL(file);
   }
 
   async function analyze() {
     if (!base64) return;
-    setLoading(true);
-    setError('');
-    setResult(null);
+    setLoading(true); setError(''); setResult(null);
     try {
       const res = await fetch('/api/analyze', {
         method: 'POST',
@@ -75,114 +53,113 @@ export default function Home() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || '분석 실패');
       setResult(data);
-    } catch (e) {
-      setError(e.message);
-    } finally {
-      setLoading(false);
-    }
+    } catch (e) { setError(e.message); }
+    finally { setLoading(false); }
   }
 
   function reset() {
-    setPreview(null);
-    setBase64('');
-    setResult(null);
-    setError('');
+    setPreview(null); setBase64(''); setResult(null); setError('');
     if (fileRef.current) fileRef.current.value = '';
   }
 
-  async function copyNotice() {
-    if (!result) return;
-    await navigator.clipboard.writeText(generateNotice(result));
+  // 구글 시트 붙여넣기용 탭 구분 텍스트
+  function makeSheetText(items) {
+    return items.map(it =>
+      [
+        it.manufacturer || '',
+        it.product_name || '',
+        it.spec || '',
+        it.status || '',
+        it.date || '',
+        it.note || '',
+      ].join('\t')
+    ).join('\n');
+  }
+
+  async function copyForSheet() {
+    if (!result?.items) return;
+    await navigator.clipboard.writeText(makeSheetText(result.items));
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   }
 
   return (
     <>
-      <Head>
-        <title>재고 이슈 알리미</title>
-        <meta name="viewport" content="width=device-width, initial-scale=1" />
-      </Head>
+      <Head><title>재고 이슈 알리미</title></Head>
+      <div style={s.wrap}>
+        <div style={s.card}>
+          <h1 style={s.title}>📦 재고 이슈 알리미</h1>
+          <p style={s.sub}>공급사 카톡 캡처 → AI 분석 → 구글 시트 바로 붙여넣기</p>
 
-      <div style={styles.container}>
-        <div style={styles.card}>
-          <h1 style={styles.title}>📦 재고 이슈 알리미</h1>
-          <p style={styles.subtitle}>공급사 카톡 캡처 → AI 분석 → 카카오채널 공지 자동 생성</p>
-
-          {/* 업로드 영역 */}
           {!preview ? (
-            <div
-              style={styles.dropzone}
-              onClick={() => fileRef.current?.click()}
-              onDragOver={(e) => e.preventDefault()}
-              onDrop={(e) => { e.preventDefault(); handleFile(e.dataTransfer.files[0]); }}
-            >
-              <div style={{ fontSize: 40 }}>📸</div>
-              <p style={styles.dropText}>
-                <strong>클릭</strong>하거나 이미지를 끌어다 놓으세요
-              </p>
-              <p style={styles.dropSub}>품절·입고·생산중단 안내 캡처 이미지</p>
-              <input
-                type="file"
-                ref={fileRef}
-                accept="image/*"
-                style={{ display: 'none' }}
-                onChange={(e) => handleFile(e.target.files[0])}
-              />
+            <div style={s.drop} onClick={() => fileRef.current?.click()}
+              onDragOver={e => e.preventDefault()}
+              onDrop={e => { e.preventDefault(); handleFile(e.dataTransfer.files[0]); }}>
+              <div style={{ fontSize: 36 }}>📸</div>
+              <p style={s.dropTxt}><strong>클릭</strong>하거나 이미지를 끌어다 놓으세요</p>
+              <p style={s.dropSub}>품절·입고·생산중단 안내 캡처 이미지</p>
+              <input type="file" ref={fileRef} accept="image/*" style={{ display:'none' }}
+                onChange={e => handleFile(e.target.files[0])} />
             </div>
           ) : (
-            <div style={{ textAlign: 'center' }}>
-              <img src={preview} alt="미리보기" style={styles.previewImg} />
-              <div style={styles.btnRow}>
-                <button style={styles.btnPrimary} onClick={analyze} disabled={loading}>
+            <div style={{ textAlign:'center' }}>
+              <img src={preview} alt="미리보기" style={s.img} />
+              <div style={s.btnRow}>
+                <button style={s.btnBlue} onClick={analyze} disabled={loading}>
                   {loading ? '⏳ 분석 중...' : '✨ AI 분석 시작'}
                 </button>
-                <button style={styles.btnSecondary} onClick={reset}>↩ 다시</button>
+                <button style={s.btnGray} onClick={reset}>↩ 다시</button>
               </div>
             </div>
           )}
 
-          {/* 에러 */}
-          {error && <div style={styles.errBox}>❌ {error}</div>}
+          {error && <div style={s.err}>❌ {error}</div>}
 
-          {/* 결과 */}
           {result && (
-            <div style={{ marginTop: 24 }}>
-              {/* 공급사 정보 */}
-              {(result.supplier || result.notice_date) && (
-                <div style={styles.infoCard}>
-                  <h3 style={styles.sectionLabel}>🏪 공급사 정보</h3>
-                  {result.supplier && <p style={styles.infoRow}><span style={styles.infoKey}>공급사</span>{result.supplier}</p>}
-                  {result.notice_date && <p style={styles.infoRow}><span style={styles.infoKey}>날짜</span>{result.notice_date}</p>}
-                  {result.raw_summary && <p style={{ ...styles.infoRow, color: '#666', fontSize: 13 }}><span style={styles.infoKey}>요약</span>{result.raw_summary}</p>}
-                </div>
-              )}
+            <div style={{ marginTop: 20 }}>
+              {/* 요약 */}
+              <div style={s.summary}>
+                <span>🏪 {result.supplier || '공급사 미상'}</span>
+                <span style={{ color:'#888', fontSize:13 }}>{result.notice_date || ''}</span>
+              </div>
+              <p style={{ fontSize:13, color:'#666', marginBottom:12 }}>{result.raw_summary}</p>
 
-              {/* 상품 목록 */}
-              <h3 style={styles.sectionLabel}>📋 추출된 상품 ({result.items?.length || 0}건)</h3>
-              {(result.items || []).map((item, i) => {
-                const cfg = STATUS_CONFIG[item.status] || STATUS_CONFIG['기타'];
-                return (
-                  <div key={i} style={styles.itemCard}>
-                    <div style={styles.itemHeader}>
-                      <span style={{ ...styles.badge, color: cfg.color, background: cfg.bg }}>
-                        {cfg.icon} {item.status}
-                      </span>
-                      <span style={styles.itemName}>{item.product_name}</span>
-                      {item.code && <span style={styles.itemCode}>{item.code}</span>}
-                    </div>
-                    {item.expected_date && <p style={styles.itemMeta}>📅 입고 예정: {item.expected_date}</p>}
-                    {item.note && <p style={styles.itemMeta}>{item.note}</p>}
-                  </div>
-                );
-              })}
-
-              {/* 공지 초안 */}
-              <h3 style={{ ...styles.sectionLabel, marginTop: 20 }}>📣 카카오채널 공지 초안</h3>
-              <pre style={styles.noticeBox}>{generateNotice(result)}</pre>
-              <button style={{ ...styles.btnPrimary, marginTop: 8 }} onClick={copyNotice}>
-                {copied ? '✅ 복사됨!' : '📋 공지 복사'}
+              {/* 구글 시트 복사 버튼 */}
+              <button style={{ ...s.btnBlue, marginBottom:12, width:'100%' }} onClick={copyForSheet}>
+                {copied ? '✅ 복사됨! 구글 시트에 붙여넣기 하세요' : '📋 구글 시트용 복사 (Ctrl+V로 붙여넣기)'}
               </button>
+
+              {/* 테이블 */}
+              <div style={{ overflowX:'auto' }}>
+                <table style={s.table}>
+                  <thead>
+                    <tr style={{ background:'#f5f5f5' }}>
+                      {['제약사','제품명','규격','상태','날짜','비고'].map(h => (
+                        <th key={h} style={s.th}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(result.items || []).map((it, i) => {
+                      const sc = STATUS_COLOR[it.status] || { bg:'#f5f5f5', color:'#333' };
+                      return (
+                        <tr key={i} style={{ borderBottom:'1px solid #eee' }}>
+                          <td style={s.td}>{it.manufacturer || '-'}</td>
+                          <td style={{ ...s.td, fontWeight:500 }}>{it.product_name}</td>
+                          <td style={s.td}>{it.spec || '-'}</td>
+                          <td style={s.td}>
+                            <span style={{ ...s.badge, background:sc.bg, color:sc.color }}>
+                              {it.status}
+                            </span>
+                          </td>
+                          <td style={s.td}>{it.date || '-'}</td>
+                          <td style={{ ...s.td, fontSize:12, color:'#555' }}>{it.note || '-'}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
             </div>
           )}
         </div>
@@ -191,94 +168,22 @@ export default function Home() {
   );
 }
 
-const styles = {
-  container: {
-    minHeight: '100vh',
-    background: '#f5f5f5',
-    display: 'flex',
-    justifyContent: 'center',
-    padding: '40px 16px',
-  },
-  card: {
-    background: '#fff',
-    borderRadius: 16,
-    padding: '32px 28px',
-    width: '100%',
-    maxWidth: 560,
-    boxShadow: '0 2px 16px rgba(0,0,0,0.08)',
-    height: 'fit-content',
-  },
-  title: { fontSize: 22, fontWeight: 700, margin: '0 0 6px', color: '#1a1a1a' },
-  subtitle: { fontSize: 14, color: '#666', margin: '0 0 24px' },
-  dropzone: {
-    border: '2px dashed #ccc',
-    borderRadius: 12,
-    padding: '40px 20px',
-    textAlign: 'center',
-    cursor: 'pointer',
-    background: '#fafafa',
-    transition: 'border-color 0.2s',
-  },
-  dropText: { fontSize: 15, color: '#333', margin: '8px 0 4px' },
-  dropSub: { fontSize: 13, color: '#999', margin: 0 },
-  previewImg: { maxWidth: '100%', maxHeight: 240, borderRadius: 10, border: '1px solid #eee' },
-  btnRow: { display: 'flex', gap: 8, marginTop: 12, justifyContent: 'center' },
-  btnPrimary: {
-    background: '#3B82F6',
-    color: '#fff',
-    border: 'none',
-    borderRadius: 8,
-    padding: '10px 20px',
-    fontSize: 14,
-    fontWeight: 600,
-    cursor: 'pointer',
-  },
-  btnSecondary: {
-    background: '#fff',
-    color: '#333',
-    border: '1px solid #ddd',
-    borderRadius: 8,
-    padding: '10px 16px',
-    fontSize: 14,
-    cursor: 'pointer',
-  },
-  errBox: {
-    background: '#FCEBEB',
-    color: '#A32D2D',
-    borderRadius: 8,
-    padding: '10px 14px',
-    fontSize: 13,
-    marginTop: 12,
-  },
-  infoCard: {
-    background: '#f8f9fa',
-    borderRadius: 10,
-    padding: '14px 16px',
-    marginBottom: 16,
-  },
-  sectionLabel: { fontSize: 14, fontWeight: 600, color: '#444', margin: '0 0 10px' },
-  infoRow: { fontSize: 14, margin: '4px 0', display: 'flex', gap: 8 },
-  infoKey: { color: '#999', minWidth: 60 },
-  itemCard: {
-    border: '1px solid #eee',
-    borderRadius: 10,
-    padding: '12px 14px',
-    marginBottom: 8,
-  },
-  itemHeader: { display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' },
-  badge: { fontSize: 12, fontWeight: 600, padding: '2px 10px', borderRadius: 99 },
-  itemName: { fontSize: 14, fontWeight: 600, color: '#1a1a1a' },
-  itemCode: { fontSize: 12, color: '#999' },
-  itemMeta: { fontSize: 13, color: '#555', margin: '4px 0 0' },
-  noticeBox: {
-    background: '#f8f9fa',
-    border: '1px solid #eee',
-    borderRadius: 10,
-    padding: '14px 16px',
-    fontSize: 13,
-    lineHeight: 1.8,
-    whiteSpace: 'pre-wrap',
-    fontFamily: 'inherit',
-    color: '#222',
-  },
+const s = {
+  wrap:    { minHeight:'100vh', background:'#f5f5f5', display:'flex', justifyContent:'center', padding:'32px 16px' },
+  card:    { background:'#fff', borderRadius:16, padding:'28px 24px', width:'100%', maxWidth:700, height:'fit-content', boxShadow:'0 2px 16px rgba(0,0,0,0.08)' },
+  title:   { fontSize:22, fontWeight:700, margin:'0 0 4px' },
+  sub:     { fontSize:13, color:'#888', margin:'0 0 20px' },
+  drop:    { border:'2px dashed #ccc', borderRadius:12, padding:'36px 20px', textAlign:'center', cursor:'pointer', background:'#fafafa' },
+  dropTxt: { fontSize:15, color:'#333', margin:'8px 0 4px' },
+  dropSub: { fontSize:13, color:'#999', margin:0 },
+  img:     { maxWidth:'100%', maxHeight:220, borderRadius:10, border:'1px solid #eee' },
+  btnRow:  { display:'flex', gap:8, marginTop:10, justifyContent:'center' },
+  btnBlue: { background:'#3B82F6', color:'#fff', border:'none', borderRadius:8, padding:'10px 20px', fontSize:14, fontWeight:600, cursor:'pointer' },
+  btnGray: { background:'#fff', color:'#333', border:'1px solid #ddd', borderRadius:8, padding:'10px 16px', fontSize:14, cursor:'pointer' },
+  err:     { background:'#FCEBEB', color:'#A32D2D', borderRadius:8, padding:'10px 14px', fontSize:13, marginTop:12 },
+  summary: { display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:4 },
+  table:   { width:'100%', borderCollapse:'collapse', fontSize:13 },
+  th:      { padding:'8px 10px', textAlign:'left', fontWeight:500, fontSize:13, whiteSpace:'nowrap' },
+  td:      { padding:'8px 10px', verticalAlign:'top' },
+  badge:   { fontSize:11, fontWeight:600, padding:'2px 8px', borderRadius:99, whiteSpace:'nowrap' },
 };

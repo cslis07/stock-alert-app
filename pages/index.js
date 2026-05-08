@@ -117,7 +117,20 @@ export default function Home() {
     if (!file || !XLSX) return;
 
     // ★ 모듈 레벨 변수에서 읽기 - 절대 stale 없음
-    const currentItems = [..._items];
+    // ★ 화면의 input 값을 직접 읽음 - 수정 내용 100% 반영
+    const tableRows = document.querySelectorAll('table tbody tr');
+    const currentItems = Array.from(tableRows).map(tr => {
+      const inputs = tr.querySelectorAll('input');
+      const select = tr.querySelector('select');
+      return {
+        manufacturer: inputs[0]?.value || '',
+        product_name: inputs[1]?.value || '',
+        spec:         inputs[2]?.value || '',
+        status:       select?.value || '',
+        date:         inputs[3]?.value || '',
+        note:         inputs[4]?.value || '',
+      };
+    }).filter(it => it.product_name.trim());
     console.log('적용할 데이터:', currentItems.map(i => i.product_name));
 
     const reader = new FileReader();
